@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
@@ -11,11 +12,28 @@ import (
 )
 
 const sshPort string = "22"
-const passwordAuth bool = true
+
+var passwordAuth bool = true
 
 func main() {
-	remote := os.Args[1]
-	local := os.Args[2]
+	identityFlag := flag.Bool("i", false, "authenticate with private key")
+	identityFile := flag.String("if", "", "location of private key file")
+	flag.Parse()
+
+	remote := flag.Args()[0]
+	local := flag.Args()[1]
+
+	if *identityFlag || *identityFile != "" {
+		passwordAuth = false
+		if *identityFile == "" {
+			homeDir, err := os.UserHomeDir()
+			if err != nil {
+				log.Fatalf("owl: Not able to get current user (%v)", err)
+			}
+
+			*identityFile = filepath.Join(homeDir, ".ssh", "id_rsa")
+		}
+	}
 
 	if remote == "" {
 		log.Fatal("owl: remote location is mandatory parameter")
@@ -40,7 +58,7 @@ func main() {
 
 		config, err = GetPasswordConfig(host, user, password)
 	} else {
-		config, err = GetPublicKeyConfig(host, user)
+		config, err = GetPublicKeyConfig(host, user, *identityFile)
 	}
 
 	if err != nil {
@@ -104,22 +122,22 @@ func main() {
 
 			switch mode := walker.Stat().Mode(); {
 			case mode.IsDir():
-				//if err2 := os.MkdirAll(dstPath, mode); err2 != nil && !os.IsExist(err) {
-				//	log.Fatal(err2)
-				//}
+				if err2 := os.MkdirAll(dstPath, mode); err2 != nil && !os.IsExist(err) {
+					log.Fatal(err2)
+				}
 				pathMap[dstPath] = true
 			case mode.IsRegular():
-				//rSrcFile, err2 := client.Open(walker.Path())
-				//if err2 != nil {
-				//	log.Fatal(err2)
-				//}
-				//
-				//rSrcFileInfo, _ := rSrcFile.Stat()
-				//dstPath, _ := filepath.Split(filepath.Join(local, relPath))
-				//err := fileCopy(rSrcFile, dstPath, rSrcFileInfo)
-				//if err != nil {
-				//	log.Fatal(err)
-				//}
+				rSrcFile, err2 := client.Open(walker.Path())
+				if err2 != nil {
+					log.Fatal(err2)
+				}
+
+				rSrcFileInfo, _ := rSrcFile.Stat()
+				dstPath, _ := filepath.Split(filepath.Join(local, relPath))
+				err := fileCopy(rSrcFile, dstPath, rSrcFileInfo)
+				if err != nil {
+					log.Fatal(err)
+				}
 				pathMap[filepath.Join(local, relPath)] = false
 			}
 		}

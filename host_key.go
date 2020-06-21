@@ -1,43 +1,64 @@
 package main
 
 import (
+	"bufio"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/crypto/ssh/knownhosts"
 	"io/ioutil"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
-// getHostkeyCallback reads the known_hosts file in .ssh directory
 func getHostKeyCallback(host string) (ssh.HostKeyCallback, error) {
+	var hostKeyCallback ssh.HostKeyCallback
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return nil, fmt.Errorf("owl: Not able to get current user (%v)", err)
+		return hostKeyCallback, fmt.Errorf("owl: Not able to get current user (%v)", err)
 	}
 
 	knownHostPath := filepath.Join(homeDir, ".ssh", "known_hosts")
-	hostKeyCallback, err := knownhosts.New(knownHostPath)
+	file, err := os.Open(knownHostPath)
 	if err != nil {
-		return nil, fmt.Errorf("owl: Not able to get the known hosts callback function (%v)", err)
+		log.Fatal(err)
 	}
 
-	return hostKeyCallback, nil
+	scanner := bufio.NewScanner(file)
+	var hostKey ssh.PublicKey
+	for scanner.Scan() {
+		fields := strings.Split(scanner.Text(), " ")
+		if len(fields) != 3 {
+			continue
+		}
+
+		if strings.Contains(fields[0], host) {
+			var err error
+			hostKey, _, _, _, err = ssh.ParseAuthorizedKey(scanner.Bytes())
+			if err != nil {
+				return hostKeyCallback, fmt.Errorf("error parsing %q: %v", fields[2], err)
+			}
+			break
+		}
+	}
+
+	if hostKey == nil {
+		return hostKeyCallback, fmt.Errorf("owl: No hostkey present for host %s. To generate host key please generate host key using ssh-keygen or ssh user@hostname", host)
+	}
+
+	if err := file.Close(); err != nil {
+		return hostKeyCallback, fmt.Errorf("owl: Not able to close file (%v)", err)
+	}
+
+	return ssh.FixedHostKey(hostKey), nil
 }
 
-func getSignerFromPrivateKey() (ssh.Signer, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("owl: Not able to get current user (%v)", err)
-	}
-
-	sshDirectory := filepath.Join(homeDir, ".ssh", "id_rsa")
-
-	privateKey, err := ioutil.ReadFile(sshDirectory)
+func getSignerFromPrivateKey(identityFile string) (ssh.Signer, error) {
+	privateKey, err := ioutil.ReadFile(identityFile)
 	if err != nil {
 		return nil, fmt.Errorf("owl: Not able to read private key (%v)", err)
 	}
@@ -50,13 +71,13 @@ func getSignerFromPrivateKey() (ssh.Signer, error) {
 	return signer, nil
 }
 
-func GetPublicKeyConfig(host, user string) (*ssh.ClientConfig, error) {
+func GetPublicKeyConfig(host, user, identityFile string) (*ssh.ClientConfig, error) {
 	hostKeyCallback, err := getHostKeyCallback(host)
 	if err != nil {
 		return nil, err
 	}
 
-	signer, err := getSignerFromPrivateKey()
+	signer, err := getSignerFromPrivateKey(identityFile)
 	if err != nil {
 		return nil, err
 	}
