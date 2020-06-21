@@ -2,7 +2,6 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 	"log"
@@ -14,6 +13,12 @@ import (
 const sshPort string = "22"
 
 var passwordAuth bool = true
+
+type Path struct {
+	remotePath string
+	destPath   string
+	mode       os.FileMode
+}
 
 func main() {
 	identityFlag := flag.Bool("i", false, "authenticate with private key")
@@ -100,8 +105,7 @@ func main() {
 		log.Fatalf("owl: Not able to get stat of remote file (%v)", err)
 	}
 
-	pathMap := make(map[string]bool)
-
+	var pathSlice []Path
 	if !srcFileInfo.IsDir() {
 		err := fileCopy(srcFile, local, srcFileInfo)
 		if err != nil {
@@ -109,8 +113,8 @@ func main() {
 		}
 	} else {
 		rootDir := filepath.Base(remoteResource)
-		walker := client.Walk(remoteResource)
 
+		walker := client.Walk(remoteResource)
 		for walker.Step() {
 			basePath := strings.Split(walker.Path(), rootDir)[0]
 			relPath, err := filepath.Rel(basePath, walker.Path())
@@ -119,29 +123,43 @@ func main() {
 			}
 
 			dstPath := filepath.Join(local, relPath)
-
 			switch mode := walker.Stat().Mode(); {
 			case mode.IsDir():
-				if err2 := os.MkdirAll(dstPath, mode); err2 != nil && !os.IsExist(err) {
-					log.Fatal(err2)
-				}
-				pathMap[dstPath] = true
+				pathSlice = append(pathSlice, Path{walker.Path(), dstPath, mode})
 			case mode.IsRegular():
-				rSrcFile, err2 := client.Open(walker.Path())
-				if err2 != nil {
-					log.Fatal(err2)
-				}
-
-				rSrcFileInfo, _ := rSrcFile.Stat()
 				dstPath, _ := filepath.Split(filepath.Join(local, relPath))
-				err := fileCopy(rSrcFile, dstPath, rSrcFileInfo)
-				if err != nil {
-					log.Fatal(err)
-				}
-				pathMap[filepath.Join(local, relPath)] = false
+				pathSlice = append(pathSlice, Path{walker.Path(), dstPath, mode})
+			}
+		}
+
+	}
+
+	download(pathSlice, client)
+}
+
+func download(pathSlice []Path, c *sftp.Client) {
+	for _, v := range pathSlice {
+		mode := v.mode
+		dp := v.destPath
+		rp := v.remotePath
+
+		switch {
+		case mode.IsDir():
+			if err2 := os.MkdirAll(dp, mode); err2 != nil && !os.IsExist(err2) {
+				log.Fatal(err2)
+			}
+		case mode.IsRegular():
+			rSrcFile, err2 := c.Open(rp)
+			if err2 != nil {
+				log.Fatal(err2)
+			}
+
+			rSrcFileInfo, _ := rSrcFile.Stat()
+
+			err := fileCopy(rSrcFile, dp, rSrcFileInfo)
+			if err != nil {
+				log.Fatal(err)
 			}
 		}
 	}
-
-	fmt.Println(pathMap)
 }
