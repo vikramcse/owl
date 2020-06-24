@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 	"log"
@@ -23,7 +24,9 @@ type Path struct {
 func main() {
 	identityFlag := flag.Bool("i", false, "authenticate with private key")
 	identityFile := flag.String("if", "", "location of private key file")
+
 	flag.Parse()
+	log.SetFlags(0)
 
 	remote := flag.Args()[0]
 	local := flag.Args()[1]
@@ -52,7 +55,7 @@ func main() {
 
 	var config *ssh.ClientConfig
 	if passwordAuth {
-		password, err := GetPassword("password: ")
+		password, err := GetPassword(fmt.Sprintf("%s@%s's password: ", user, host))
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -67,14 +70,17 @@ func main() {
 	}
 
 	if err != nil {
-		log.Println(err)
-		os.Exit(1)
+		log.Fatal(err)
 	}
 
 	url := host + ":" + sshPort
 	conn, err := ssh.Dial("tcp", url, config)
 	if err != nil {
-		log.Fatalf("Failed to dial: %s", err)
+		if strings.Contains(err.Error(), "ssh: unable to authenticate") {
+			log.Fatalf("Permission denied, please try again: %s", err)
+		}
+
+		log.Fatalf("owl: Failed to dial: %s", err)
 	}
 
 	defer func() {
@@ -94,72 +100,67 @@ func main() {
 		}
 	}()
 
-	// open remote file
-	srcFile, err := client.Open(remoteResource)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	srcFileInfo, err := srcFile.Stat()
-	if err != nil {
-		log.Fatalf("owl: Not able to get stat of remote file (%v)", err)
-	}
+	log.Printf("Connecting to %s", host)
+	log.Printf("Fetching %v to %v", remoteResource, local)
 
 	var pathSlice []Path
-	if !srcFileInfo.IsDir() {
-		err := fileCopy(srcFile, local, srcFileInfo)
+	rootDir := filepath.Base(remoteResource)
+	walker := client.Walk(remoteResource)
+
+	for walker.Step() {
+		basePath := strings.Split(walker.Path(), rootDir)[0]
+		relPath, err := filepath.Rel(basePath, walker.Path())
 		if err != nil {
 			log.Fatal(err)
 		}
-	} else {
-		rootDir := filepath.Base(remoteResource)
 
-		walker := client.Walk(remoteResource)
-		for walker.Step() {
-			basePath := strings.Split(walker.Path(), rootDir)[0]
-			relPath, err := filepath.Rel(basePath, walker.Path())
-			if err != nil {
-				log.Fatal(err)
-			}
-
-			dstPath := filepath.Join(local, relPath)
-			switch mode := walker.Stat().Mode(); {
-			case mode.IsDir():
-				pathSlice = append(pathSlice, Path{walker.Path(), dstPath, mode})
-			case mode.IsRegular():
-				dstPath, _ := filepath.Split(filepath.Join(local, relPath))
-				pathSlice = append(pathSlice, Path{walker.Path(), dstPath, mode})
-			}
+		dstPath := filepath.Join(local, relPath)
+		switch mode := walker.Stat().Mode(); {
+		case mode.IsDir():
+			pathSlice = append(pathSlice, Path{walker.Path(), dstPath, mode})
+		case mode.IsRegular():
+			dstPath, _ := filepath.Split(filepath.Join(local, relPath))
+			pathSlice = append(pathSlice, Path{walker.Path(), dstPath, mode})
 		}
-
 	}
 
-	download(pathSlice, client)
+	downloadFileSeq(pathSlice, client)
 }
 
-func download(pathSlice []Path, c *sftp.Client) {
+func downloadFileSeq(pathSlice []Path, c *sftp.Client) {
 	for _, v := range pathSlice {
-		mode := v.mode
-		dp := v.destPath
-		rp := v.remotePath
-
-		switch {
-		case mode.IsDir():
-			if err2 := os.MkdirAll(dp, mode); err2 != nil && !os.IsExist(err2) {
-				log.Fatal(err2)
-			}
-		case mode.IsRegular():
-			rSrcFile, err2 := c.Open(rp)
-			if err2 != nil {
-				log.Fatal(err2)
-			}
-
-			rSrcFileInfo, _ := rSrcFile.Stat()
-
-			err := fileCopy(rSrcFile, dp, rSrcFileInfo)
-			if err != nil {
-				log.Fatal(err)
-			}
+		_, err := download(v, c)
+		if err != nil {
+			fmt.Println(err)
 		}
 	}
+}
+
+func download(v Path, c *sftp.Client) (int64, error) {
+	var n int64
+
+	switch {
+	case v.mode.IsDir():
+		if err := os.MkdirAll(v.destPath, v.mode); err != nil && !os.IsExist(err) {
+			return 0, err
+		}
+		log.Printf("Retriving %s", v.remotePath)
+	case v.mode.IsRegular():
+		rSrcFile, err := c.Open(v.remotePath)
+		if err != nil {
+			return 0, err
+		}
+
+		rSrcFileInfo, _ := rSrcFile.Stat()
+
+		n, err = fileCopy(rSrcFile, v.destPath, rSrcFileInfo)
+		if err != nil {
+			log.Printf("%v \n", err)
+			return 0, err
+		}
+
+		log.Printf("%s", v.remotePath)
+	}
+
+	return n, nil
 }

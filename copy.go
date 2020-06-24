@@ -41,24 +41,29 @@ func poolCopy(dst io.Writer, src io.Reader) (written int64, err error) {
 	return
 }
 
-func fileCopy(srcf io.Reader, dest string, fileinfo os.FileInfo) error {
-	dstPath := filepath.Join(dest, fileinfo.Name())
-	dstf, err := os.OpenFile(dstPath, os.O_WRONLY|os.O_CREATE, fileinfo.Mode())
-	if err != nil && !os.IsExist(err) {
-		return fmt.Errorf("owl: unable to create file (%v)", err)
+func fileCopy(srcf io.Reader, dest string, fileInfo os.FileInfo) (int64, error) {
+	dstPath := filepath.Join(dest, fileInfo.Name())
+
+	dstf, err := os.OpenFile(dstPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, fileInfo.Mode())
+	if err != nil {
+		// File Already exists, do not copy
+		if os.IsExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("owl: unable to create file (%v)", err)
 	}
 	defer dstf.Close()
 
 	n, err := poolCopy(dstf, srcf)
 	if err != nil {
-		return fmt.Errorf("owl: unable to copy file (%v)", err)
+		return 0, fmt.Errorf("owl: unable to copy file (%v)", err)
 	}
-	fmt.Printf("%d bytes copied\n", n)
 
 	// flush in-memory copy
 	err = dstf.Sync()
 	if err != nil {
 		log.Fatal(err)
 	}
-	return nil
+
+	return n, nil
 }

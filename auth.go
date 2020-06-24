@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"golang.org/x/crypto/ssh/terminal"
+	"log"
 	"os"
 	"os/signal"
 )
@@ -23,6 +24,7 @@ func GetPassword(prompt string) (string, error) {
 	go func() {
 		<-c
 		_ = terminal.Restore(fd, initialTermState)
+		log.Println("Connection Closed")
 		os.Exit(1)
 	}()
 
