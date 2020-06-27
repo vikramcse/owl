@@ -2,10 +2,6 @@ package main
 
 import (
 	"bufio"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
-	"encoding/pem"
 	"fmt"
 	"golang.org/x/crypto/ssh"
 	"io/ioutil"
@@ -110,35 +106,38 @@ func GetPasswordConfig(host, user, password string) (*ssh.ClientConfig, error) {
 	return config, nil
 }
 
-func generateRSAKeys(writeInFile bool) (*rsa.PublicKey, *rsa.PrivateKey, error) {
-	var publicKey *rsa.PublicKey
-
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+func GetIdentityPath(identityFile *string) (error, string) {
+	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return nil, nil, err
-	}
-	publicKey = &privateKey.PublicKey
-
-	if writeInFile {
-		var RSAPrivateFile string = "key.pem"
-
-		err = func(privateKey *rsa.PrivateKey, keyfile string) error {
-			file, err := os.OpenFile(keyfile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0666)
-			if err != nil {
-				return err
-			}
-			defer file.Close()
-
-			privateBlock := &pem.Block{
-				Type:  "RSA PRIVATE KEY",
-				Bytes: x509.MarshalPKCS1PrivateKey(privateKey),
-			}
-
-			pem.Encode(file, privateBlock)
-
-			return nil
-		}(privateKey, RSAPrivateFile)
+		return fmt.Errorf("owl: Not able to get current user (%v)", err), ""
 	}
 
-	return publicKey, privateKey, err
+	identityFilePath := filepath.Join(homeDir, ".ssh", "id_rsa")
+
+	if *identityFile != "" {
+		passwordAuth = false
+		identityFilePath = *identityFile
+	}
+	return err, identityFilePath
+}
+
+func GetSSHConfig(user, host, identityFilePath string) (error, *ssh.ClientConfig) {
+	var config *ssh.ClientConfig
+	var err error
+	if passwordAuth {
+		password, err := GetPassword(fmt.Sprintf("%s@%s's password: ", user, host))
+		if err != nil {
+			return err, config
+		}
+
+		if password == "" {
+			return fmt.Errorf("owl: password can not be empty"), config
+		}
+
+		config, err = GetPasswordConfig(host, user, password)
+	} else {
+		config, err = GetPublicKeyConfig(host, user, identityFilePath)
+	}
+
+	return err, config
 }

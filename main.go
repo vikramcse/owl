@@ -2,7 +2,6 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 	"log"
@@ -15,60 +14,37 @@ const sshPort string = "22"
 
 var passwordAuth bool = true
 
-type Path struct {
+type path struct {
 	remotePath string
 	destPath   string
 	mode       os.FileMode
 }
 
 func main() {
-	identityFlag := flag.Bool("i", false, "authenticate with private key")
-	identityFile := flag.String("if", "", "location of private key file")
+	identityFile := flag.String("i", "", "location of private key file")
 
 	flag.Parse()
 	log.SetFlags(0)
 
+	var err error
 	remote := flag.Args()[0]
 	local := flag.Args()[1]
-
-	if *identityFlag || *identityFile != "" {
-		passwordAuth = false
-		if *identityFile == "" {
-			homeDir, err := os.UserHomeDir()
-			if err != nil {
-				log.Fatalf("owl: Not able to get current user (%v)", err)
-			}
-
-			*identityFile = filepath.Join(homeDir, ".ssh", "id_rsa")
-		}
-	}
 
 	if remote == "" {
 		log.Fatal("owl: remote location is mandatory parameter")
 	}
 
-	var err error
 	user, host, remoteResource, err := ParseRemoteString(remote)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	var config *ssh.ClientConfig
-	if passwordAuth {
-		password, err := GetPassword(fmt.Sprintf("%s@%s's password: ", user, host))
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		if password == "" {
-			log.Fatal("owl: password can not be empty")
-		}
-
-		config, err = GetPasswordConfig(host, user, password)
-	} else {
-		config, err = GetPublicKeyConfig(host, user, *identityFile)
+	err, identityFilePath := GetIdentityPath(identityFile)
+	if err != nil {
+		log.Fatal(err)
 	}
 
+	err, config := GetSSHConfig(user, host, identityFilePath)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -77,7 +53,7 @@ func main() {
 	conn, err := ssh.Dial("tcp", url, config)
 	if err != nil {
 		if strings.Contains(err.Error(), "ssh: unable to authenticate") {
-			log.Fatalf("Permission denied, please try again: %s", err)
+			log.Fatal("Permission denied, please try again")
 		}
 
 		log.Fatalf("owl: Failed to dial: %s", err)
@@ -103,7 +79,18 @@ func main() {
 	log.Printf("Connecting to %s", host)
 	log.Printf("Fetching %v to %v", remoteResource, local)
 
-	var pathSlice []Path
+	pathSlice := walkRemotePath(remoteResource, local, client)
+
+	for _, v := range pathSlice {
+		_, err := download(v, client)
+		if err != nil {
+			log.Println(err)
+		}
+	}
+}
+
+func walkRemotePath(remoteResource, local string, client *sftp.Client) []path {
+	var pathSlice []path
 	rootDir := filepath.Base(remoteResource)
 	walker := client.Walk(remoteResource)
 
@@ -117,26 +104,16 @@ func main() {
 		dstPath := filepath.Join(local, relPath)
 		switch mode := walker.Stat().Mode(); {
 		case mode.IsDir():
-			pathSlice = append(pathSlice, Path{walker.Path(), dstPath, mode})
+			pathSlice = append(pathSlice, path{walker.Path(), dstPath, mode})
 		case mode.IsRegular():
 			dstPath, _ := filepath.Split(filepath.Join(local, relPath))
-			pathSlice = append(pathSlice, Path{walker.Path(), dstPath, mode})
+			pathSlice = append(pathSlice, path{walker.Path(), dstPath, mode})
 		}
 	}
-
-	downloadFileSeq(pathSlice, client)
+	return pathSlice
 }
 
-func downloadFileSeq(pathSlice []Path, c *sftp.Client) {
-	for _, v := range pathSlice {
-		_, err := download(v, c)
-		if err != nil {
-			fmt.Println(err)
-		}
-	}
-}
-
-func download(v Path, c *sftp.Client) (int64, error) {
+func download(v path, c *sftp.Client) (int64, error) {
 	var n int64
 
 	switch {
