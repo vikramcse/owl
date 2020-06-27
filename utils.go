@@ -2,11 +2,11 @@ package main
 
 import "strings"
 
-// scp username@destination_host:source destination
+// scp username@destination_host:source
 
 // ParseRemoteString will parse the source string format to get
 // extract username, host and file/folder names
-func ParseRemoteString(s string) (username string, host string, resource string, err error) {
+func ParseRemoteString(s string) (username string, host string, resource string) {
 	ss := strings.Split(s, "@")
 	hrs := strings.Split(ss[1], ":")
 	username = ss[0]

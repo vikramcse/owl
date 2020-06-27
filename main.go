@@ -34,10 +34,7 @@ func main() {
 		log.Fatal("owl: remote location is mandatory parameter")
 	}
 
-	user, host, remoteResource, err := ParseRemoteString(remote)
-	if err != nil {
-		log.Fatal(err)
-	}
+	user, host, remoteResource := ParseRemoteString(remote)
 
 	err, identityFilePath := GetIdentityPath(identityFile)
 	if err != nil {
