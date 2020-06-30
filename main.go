@@ -26,12 +26,22 @@ func main() {
 	flag.Parse()
 	log.SetFlags(0)
 
+	if len(flag.Args()) < 2 {
+		PrintHelp()
+	}
+
 	var err error
 	remote := flag.Args()[0]
 	local := flag.Args()[1]
 
 	if remote == "" {
-		log.Fatal("owl: remote location is mandatory parameter")
+		log.Println("owl: remote location is mandatory parameter")
+		PrintHelp()
+	}
+
+	if local == "" {
+		log.Println("owl: local location is mandatory parameter")
+		PrintHelp()
 	}
 
 	user, host, remoteResource := ParseRemoteString(remote)
@@ -50,7 +60,7 @@ func main() {
 	conn, err := ssh.Dial("tcp", url, config)
 	if err != nil {
 		if strings.Contains(err.Error(), "ssh: unable to authenticate") {
-			log.Fatal("Permission denied, please try again")
+			log.Fatal(`owl: Permission denied. Please enter correct password or try to authenticate with private key file by using owl -i flag`)
 		}
 
 		log.Fatalf("owl: Failed to dial: %s", err)

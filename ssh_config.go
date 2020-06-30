@@ -43,7 +43,9 @@ func getHostKeyCallback(host string) (ssh.HostKeyCallback, error) {
 	}
 
 	if hostKey == nil {
-		return hostKeyCallback, fmt.Errorf("owl: No hostkey present for host %s. To generate host key please generate host key using ssh-keygen or ssh user@hostname", host)
+		return hostKeyCallback, fmt.Errorf(`owl: No hostkey present for host %s.
+		To generate host key please please use ssh-keyscan [hostname|ip address] or
+		run ssh user@hostname`, host)
 	}
 
 	if err := file.Close(); err != nil {
@@ -53,15 +55,31 @@ func getHostKeyCallback(host string) (ssh.HostKeyCallback, error) {
 	return ssh.FixedHostKey(hostKey), nil
 }
 
-func getSignerFromPrivateKey(identityFile string) (ssh.Signer, error) {
+func getSignerFromPrivateKey(identityFile, host, user string) (ssh.Signer, error) {
 	privateKey, err := ioutil.ReadFile(identityFile)
 	if err != nil {
 		return nil, fmt.Errorf("owl: Not able to read private key (%v)", err)
 	}
 
 	signer, err := ssh.ParsePrivateKey(privateKey)
-	if err != nil {
-		return nil, fmt.Errorf("own: Not able to parse private key (%v)", err)
+
+	switch err.(type) {
+	case *ssh.PassphraseMissingError:
+		password, err := GetPassword(fmt.Sprintf("%s@%s's password: ", user, host))
+		if err != nil {
+			return nil, err
+		}
+
+		if password == "" {
+			return nil, fmt.Errorf("owl: password can not be empty")
+		}
+
+		signer, err = ssh.ParsePrivateKeyWithPassphrase(privateKey, []byte(password))
+		if err != nil {
+			return nil, fmt.Errorf("owl: Not able to parse private key with password (%v)", err)
+		}
+	default:
+		return nil, fmt.Errorf("owl: Not able to parse private key (%v)", err)
 	}
 
 	return signer, nil
@@ -73,7 +91,7 @@ func GetPublicKeyConfig(host, user, identityFile string) (*ssh.ClientConfig, err
 		return nil, err
 	}
 
-	signer, err := getSignerFromPrivateKey(identityFile)
+	signer, err := getSignerFromPrivateKey(identityFile, host, user)
 	if err != nil {
 		return nil, err
 	}

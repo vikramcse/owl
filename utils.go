@@ -1,6 +1,10 @@
 package main
 
-import "strings"
+import (
+	"fmt"
+	"os"
+	"strings"
+)
 
 // scp username@destination_host:source
 
@@ -13,4 +17,14 @@ func ParseRemoteString(s string) (username string, host string, resource string)
 	host = hrs[0]
 	resource = hrs[1]
 	return
+}
+
+func PrintHelp() {
+	fmt.Print(`owl: 
+A SFTP like clone written in go to download files from remote server Usage:
+  owl [option] user@remote:/path/to/the/file destination
+Options:
+  -i       path to private key file
+`)
+	os.Exit(1)
 }
